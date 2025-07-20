@@ -1,4 +1,5 @@
 import socket
+import threading
 
 HOST='127.0.0.1'
 PORT=12345
@@ -10,14 +11,14 @@ sock = socket.socket(
 
 sock.bind((HOST, PORT))
 print(f"Socket bound to {HOST}:{PORT}")
-sock.listen()
-conn, addr = sock.accept()
 
-with conn : 
-    print(f"connected by {addr}")
-    while True:
-        data = conn.recv(1024)
-        if not data:
-            break
-        conn.sendall(data)
+def client_handler(conn:socket.socket) -> None:
+    data = conn.recv(1024)
+    conn.sendall(data)
+
+while True:
+    sock.listen()
+    conn, addr = sock.accept()
+    print(f"Connected by {addr}")
+    threading.Thread(target=client_handler, args=(conn,)).start()
             

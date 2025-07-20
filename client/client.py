@@ -3,8 +3,11 @@ import socket
 HOST:str = "127.0.0.1"
 PORT:int = 12345
 
+def request_user(sock:socket.socket, uname: str) -> None:
+    sock.send(f"/user {uname}".encode())
+
 def send_msg(sock:socket.socket, msg:str) -> None:
-    sock.sendall(msg.encode())
+    sock.sendall(f"/send {msg}".encode())
 
 
 def help() -> None:
@@ -33,6 +36,10 @@ instruction = ""
 exiting = False
 
 print(f'Connected to {HOST}:{PORT}')
+
+print('Please provide your username ----------------------')
+request_user(sock, input('>>> '))
+
 print('Please select the action to perform ---------------')
 help()
 

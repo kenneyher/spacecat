@@ -9,12 +9,35 @@ sock = socket.socket(
     type = socket.SOCK_STREAM
 )
 
+client_usernames: dict = {}
+
 sock.bind((HOST, PORT))
 print(f"Socket bound to {HOST}:{PORT}")
 
 def client_handler(conn:socket.socket) -> None:
-    data = conn.recv(1024)
-    conn.sendall(data)
+    data:str = conn.recv(1024).decode()
+    if data.startswith('/user '):
+        client_usernames[conn] = data.split(" ")[1]
+    else:
+        conn.sendall("Expected /user <username> as first message".encode())
+        conn.close()
+        return
+    
+    while True:
+        data:str = conn.recv(1024).decode()
+        if not data:
+            break
+        msg = data.split(" ")
+
+        if data.startswith('/send'):
+            msg_content:str = " ".join(msg[1:])
+            user = client_usernames[conn]
+            response = f"< {user}: {msg_content}"
+            conn.sendall(response.encode())
+    
+    conn.close()
+    print(f"< {client_usernames[conn]} disconnected.")
+    del client_usernames[conn]
 
 while True:
     sock.listen()

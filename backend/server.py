@@ -11,6 +11,18 @@ sock = socket.socket(
 
 client_usernames: dict = {}
 
+
+def display_usernames(conn:socket.socket) -> None:
+    client_list = f""
+    if len(client_usernames.values()) == 1:
+        conn.sendall("< No other users online.".encode())
+    for client in client_usernames.values():
+        if client == client_usernames[conn]:
+            continue
+        client_list += f"< {client}\n"
+    conn.sendall(client_list.encode())
+    
+
 sock.bind((HOST, PORT))
 print(f"Socket bound to {HOST}:{PORT}")
 
@@ -34,6 +46,8 @@ def client_handler(conn:socket.socket) -> None:
             user = client_usernames[conn]
             response = f"< {user}: {msg_content}"
             conn.sendall(response.encode())
+        elif data.startswith('/online'):
+            display_usernames(conn=conn)
     
     conn.close()
     print(f"< {client_usernames[conn]} disconnected.")

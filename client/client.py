@@ -14,7 +14,12 @@ def help() -> None:
     print('/send -> send message to server')
     print('/end -> end connection with server')
     print('/help -> print available options')
+    print('/online -> display online users')
 
+def online() -> None:
+    sock.send(f"/online".encode())
+    response = sock.recv(1024).decode()
+    print(response)
 
 def end(sock:socket.socket) -> None:
     sock.close()
@@ -23,7 +28,8 @@ def end(sock:socket.socket) -> None:
 ACTIONS:dict = {
     "/send" : send_msg,
     "/end" : end,
-    "/help" : help
+    "/help" : help,
+    "/online" : online,
 }
 
 sock:socket.socket = socket.socket(
@@ -56,6 +62,8 @@ while not exiting:
         elif command[0] == "/end":
             exiting = True
             ACTIONS[command[0]](sock)
+        elif command[0] == "/online":
+            ACTIONS[command[0]]()
         else:
             ACTIONS[command[0]]()
 

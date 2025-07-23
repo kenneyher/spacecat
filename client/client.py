@@ -1,71 +1,60 @@
 import socket
+import sys
+import threading
 
-HOST:str = "127.0.0.1"
-PORT:int = 12345
+class Client:
+    def __init__(self, host:str = "127.0.0.1", port:int = 12345) -> None:
+        self.host:str = host
+        self.port:int = port
+        self.sock = None
+    
+    def recieve(self, sock: socket.socket) -> None:
+        while True:
+            try:
+                data:bytes = sock.recv(1024)
+                if not data:
+                    print("\n< [System] Disconnected from server.")
+                    break
+                msg:str = data.decode()
 
-def request_user(sock:socket.socket, uname: str) -> None:
-    sock.send(f"/user {uname}".encode())
+                # Erase current input, print msg, and redraw input
+                sys.stdout.write('\r' + ' ' * 80 + '\r')  # clear line
+                sys.stdout.write(msg)
+                sys.stdout.write("> ")
+                sys.stdout.flush()
+            except Exception as e:
+                print(f"<! [SystemERROR] Error receiving data: {e}")
+                break
+    
+    def start(self):
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((self.host, self.port))
+        
+        threading.Thread(
+            target=self.recieve,
+            args=(sock,),
+            daemon=True
+        ).start()
 
-def send_msg(sock:socket.socket, msg:str) -> None:
-    sock.sendall(f"/send {msg}".encode())
+        try:
+            while True:
+                sys.stdout.write("> ")
+                sys.stdout.flush()
+                uinput:str = sys.stdin.readline().strip()
+                if not uinput:
+                    continue
+
+                sock.send(uinput.encode())
+                if uinput == "/exit":
+                    break
+        except KeyboardInterrupt:
+            sock.send(b"/end")
+        except Exception as e:
+            print(f"<! [SystemERROR] Error: {e}")
+        finally:
+            sock.close()
 
 
-def help() -> None:
-    print('/send -> send message to server')
-    print('/end -> end connection with server')
-    print('/help -> print available options')
-    print('/online -> display online users')
-
-def online() -> None:
-    sock.send(f"/online".encode())
-    response = sock.recv(1024).decode()
-    print(response)
-
-def end(sock:socket.socket) -> None:
-    sock.close()
-
-
-ACTIONS:dict = {
-    "/send" : send_msg,
-    "/end" : end,
-    "/help" : help,
-    "/online" : online,
-}
-
-sock:socket.socket = socket.socket(
-    family = socket.AF_INET,
-    type = socket.SOCK_STREAM
-)
-
-sock.connect((HOST, PORT))
-instruction = ""
-exiting = False
-
-print(f'Connected to {HOST}:{PORT}')
-
-print('Please provide your username ----------------------')
-request_user(sock, input('>>> '))
-
-print('Please select the action to perform ---------------')
-help()
-
-while not exiting:
-    # Input will be parsed with split(), Minecraft style
-    command:list[str] = input('>>> ').lower().split(" ")
-    if command[0] not in ACTIONS:
-        print('Please provide a correct option')
-    else:
-        if command[0] == "/send":
-            ACTIONS[command[0]](sock, " ".join(command[1:]))
-            msg = sock.recv(1024)
-            print(msg.decode())
-        elif command[0] == "/end":
-            exiting = True
-            ACTIONS[command[0]](sock)
-        elif command[0] == "/online":
-            ACTIONS[command[0]]()
-        else:
-            ACTIONS[command[0]]()
-
-sock.close()
-
+if __name__ == "__main__":
+    client = Client()
+    client.start()

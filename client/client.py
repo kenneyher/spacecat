@@ -3,57 +3,62 @@ import sys
 import threading
 
 class Client:
-    def __init__(self, host:str = "127.0.0.1", port:int = 12345) -> None:
-        self.host:str = host
-        self.port:int = port
-        self.sock = None
+    def __init__(self, host:str="127.0.0.1", port:int=55555):
+        self.HOST = host
+        self.PORT = port
+        self.client = socket.socket(
+            family=socket.AF_INET,
+            type=socket.SOCK_STREAM
+        )
     
-    def recieve(self, sock: socket.socket) -> None:
+
+    def receive(self):
         while True:
             try:
-                data:bytes = sock.recv(1024)
-                if not data:
-                    print("\n< [System] Disconnected from server.")
+                msg:str = self.client.recv(1024).decode()
+                if not msg:
+                    print("<! [SystemERROR] Connection closed by server.")
+                    self.client.close()
                     break
-                msg:str = data.decode()
-
-                # Erase current input, print msg, and redraw input
-                sys.stdout.write('\r' + ' ' * 80 + '\r')  # clear line
-                sys.stdout.write(msg)
-                sys.stdout.write("> ")
-                sys.stdout.flush()
+                print(msg, end="")
             except Exception as e:
                 print(f"<! [SystemERROR] Error receiving data: {e}")
+                self.client.close()
                 break
     
+    def write(self):
+        while True:
+            try:
+                msg = input("")
+                if msg:
+                    if not msg.startswith("/"):
+                        msg = f"/send {msg}"
+                    self.client.send(msg.encode())
+                    if msg.lower().strip() == "/exit":
+                        break
+            except KeyboardInterrupt:
+                self.client.send("/exit".encode())
+                print("\n<! [System] Connection closed by user.")
+                break
+        print("< [System] Goodbye!")
+        self.client.close()
+        sys.exit(0)
+
+
     def start(self):
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect((self.host, self.port))
+        self.client.connect((self.HOST, self.PORT))
+
+        welcome:str = self.client.recv(1024).decode()
+        print(welcome, end="")
+        uname:str = input("> ")
+        self.client.send(f"/user {uname}".encode())
         
         threading.Thread(
-            target=self.recieve,
-            args=(sock,),
+            target=self.receive,
             daemon=True
         ).start()
 
-        try:
-            while True:
-                sys.stdout.write("> ")
-                sys.stdout.flush()
-                uinput:str = sys.stdin.readline().strip()
-                if not uinput:
-                    continue
-
-                sock.send(uinput.encode())
-                if uinput == "/exit":
-                    break
-        except KeyboardInterrupt:
-            sock.send(b"/end")
-        except Exception as e:
-            print(f"<! [SystemERROR] Error: {e}")
-        finally:
-            sock.close()
-
+        self.write()
 
 if __name__ == "__main__":
     client = Client()

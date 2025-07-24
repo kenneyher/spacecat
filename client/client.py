@@ -163,6 +163,7 @@ class ChatClient:
                 if not self.input_queue.empty():
                     user_input = self.input_queue.get().strip()
                     
+                    # print(f"\r{' ' * 50}\r{user_input}") # activate for debugging purposes only
                     if not user_input:
                         print(f"{self.username}> ", end="", flush=True)
                         continue
@@ -170,13 +171,16 @@ class ChatClient:
                     if user_input == "/exit":
                         await self.send("/exit")
                         break
-                    else:
+                    elif not user_input.startswith("/"):
                         # Clear the input line and show what was typed
-                        # print(f"\r{' ' * 50}\r{self.username}> {user_input}")
                         
                         # Send the message
                         await self.send(f"/send {user_input}")
                         
+                        # Show new prompt
+                        print(f"{self.username}> ", end="", flush=True)
+                    else:
+                        await self.send(user_input)
                         # Show new prompt
                         print(f"{self.username}> ", end="", flush=True)
                     

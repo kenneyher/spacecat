@@ -2,6 +2,7 @@ import asyncio
 import sys
 import threading
 from queue import Queue
+import re
 
 class ChatClient:
     def __init__(self, host='localhost', port=8888):
@@ -14,6 +15,7 @@ class ChatClient:
         self.connected = False
         self.input_queue = Queue()
         self.running = True
+        self.room = "general"
     
     async def connect(self):
         """Connect to the chat server"""
@@ -74,9 +76,12 @@ class ChatClient:
                             print("Username> ", end="", flush=True)
                             continue
                     
+                    if f"@{self.username}" in message and f"joined" in message:
+                        self.room = re.findall(r'\[(#\w+)\]', message)[0]
+
                     # Show prompt only if we have a username
                     if self.username:
-                        print(f"{self.username}> ", end="", flush=True)
+                        print(f"[{self.room}]> ", end="", flush=True)
                     
             except asyncio.CancelledError:
                 break
@@ -87,7 +92,7 @@ class ChatClient:
     def show_prompt(self):
         """Show the input prompt"""
         if self.username:
-            print(f"{self.username}> ", end="", flush=True)
+            print(f"[{self.username}]> ", end="", flush=True)
         else:
             print("Username> ", end="", flush=True)
     
@@ -154,7 +159,7 @@ class ChatClient:
     async def handle_user_input(self):
         """Handle user input from the queue"""
         # Show initial prompt
-        print(f"{self.username}> ", end="", flush=True)
+        print(f"[{self.room}]> ", end="", flush=True)
         
         while self.connected and self.running:
             try:
@@ -165,7 +170,7 @@ class ChatClient:
                     
                     # print(f"\r{' ' * 50}\r{user_input}") # activate for debugging purposes only
                     if not user_input:
-                        print(f"{self.username}> ", end="", flush=True)
+                        print(f"[{self.room}]> ", end="", flush=True)
                         continue
                     
                     if user_input == "/exit":
@@ -178,11 +183,11 @@ class ChatClient:
                         await self.send(f"/send {user_input}")
                         
                         # Show new prompt
-                        print(f"{self.username}> ", end="", flush=True)
+                        print(f"[{self.room}]> ", end="", flush=True)
                     else:
                         await self.send(user_input)
                         # Show new prompt
-                        print(f"{self.username}> ", end="", flush=True)
+                        print(f"[{self.room}]> ", end="", flush=True)
                     
             except Exception as e:
                 print(f"Input handling error: {e}")

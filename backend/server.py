@@ -7,8 +7,11 @@ class Server:
     def __init__(self, host="127.0.0.1", port=8888):
         self.HOST = host
         self.PORT = port
-        self.clients: Dict[asyncio.StreamWriter, str] = {}     # { writer: username }
+        self.clients: Dict[asyncio.StreamWriter, str] = {}      # { writer: username }
         self.users: Set[str] = set()
+        self.rooms: Dict[str, Set[str]] = {
+            "general": set()
+        }                    # { room: list[uname] }
         self.logger = self._setup_logging()
 
     def _setup_logging(self):
@@ -39,17 +42,25 @@ class Server:
                 pass
 
             self.logger.info(f"User @{uname} disconnected")
-            await self.broadcast(f"< [System] @{uname} left the room!")
+            await self.broadcast(f"< [System] @{uname} left the chat!")
 
-    async def broadcast(self, msg: str, exclude=None):
+    async def broadcast(self, msg: str, room:str=None, exclude=None):
         if not self.clients:
             return
+
+        filter_by_room:bool = False
+        if room and room in self.rooms :
+            filter_by_room = True
         
         self.logger.info(f"Broadcasting: {msg}")
         disconnected = []
 
         for writer in self.clients:
-            if writer != exclude:
+            if filter_by_room:
+                in_same_room = self.clients[writer] in self.rooms[room]
+            else:
+                in_same_room = True
+            if writer != exclude and in_same_room:
                 try:
                     writer.write(f"{msg}\n".encode())
                     await writer.drain()
@@ -59,9 +70,15 @@ class Server:
         
         for writer in disconnected:
             await self._disconnect(writer)
+    
+    async def list_rooms(self, writer: asyncio.StreamWriter):
+        rooms:str = "< [System] Openned Rooms:\n"
+        rooms += "\n".join([f"\t[#{room}]" for room in self.rooms])
+        await self.send_to(writer, rooms)
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         addr = writer.get_extra_info("peername")
+        current_room = "general"
         self.logger.info(f"< [Server] New connection from {addr}")
 
         try:
@@ -85,9 +102,10 @@ class Server:
                                 f"Welcome @{uname}! You can now start chatting."
                             )
                             self.logger.info(f"User {uname} joined from {addr}")
+                            self.rooms[current_room].add(uname)
                             await self.broadcast(
-                                msg=f"< [System] @{uname} joined the room!",
-                                exclude=writer
+                                msg=f"< [System] @{uname} joined [#{current_room}]!",
+                                room=current_room,
                             )
                         else:
                             await self.send_to(
@@ -124,7 +142,8 @@ class Server:
                         content:str = msg[6:]
                         if content.strip():
                             await self.broadcast(
-                                msg=f"< @{uname} {content}",
+                                msg=f"< [#{current_room}] @{uname} {content}",
+                                room=current_room,
                                 exclude=writer
                             )
                             self.logger.info(f"Sent from @{uname}: {content}")
@@ -139,7 +158,10 @@ class Server:
                             self.logger.info("Args for /whisper " + ", ".join(args))
                             target:str = args[1]
                             content:str = " ".join(args[2:])
-                            if target not in self.users:
+                            if (
+                                target not in self.users or
+                                target not in self.rooms[current_room]
+                            ):
                                 await self.send_to(
                                     writer,
                                     f"< [System] User @{target} could not be resolved."
@@ -153,9 +175,29 @@ class Server:
                                 target_writer = self._get_writer(target)
                                 await self.send_to(
                                     target_writer,
-                                    f"< @{uname} *whispered* \"{content}\""
+                                    f"< [#{current_room}] @{uname} *whispered* \"{content}\""
                                 )
-
+                    elif msg.startswith("/rooms"):
+                        await self.list_rooms(writer)
+                    elif msg.startswith("/room "):
+                        roomname:str = msg.split(' ', 1)[1].strip()
+                        self.rooms[current_room].remove(uname)
+                        await self.broadcast(
+                            f"< [System] @{uname} left [#{current_room}]",
+                            current_room,
+                        )
+                        if roomname not in self.rooms:
+                            await self.send_to(
+                                writer, 
+                                f"< [System] Creating room [#{roomname}]"
+                            )
+                            self.rooms[roomname] = set()
+                        current_room = roomname
+                        self.rooms[current_room].add(uname)
+                        await self.broadcast(
+                            f"< [System] @{uname} joined [#{current_room}]",
+                            current_room,
+                        )
                     else:
                         await self.send_to(
                             writer,

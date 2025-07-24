@@ -1,86 +1,164 @@
-import socket
-import threading
+import asyncio
+import logging
+from typing import Dict, Set
+
 
 class Server:
-    def __init__(self, host:str="127.0.0.1", port:int=55555):
+    def __init__(self, host="127.0.0.1", port=8888):
         self.HOST = host
         self.PORT = port
-        self.server = socket.socket(
-            family=socket.AF_INET,
-            type=socket.SOCK_STREAM
+        self.clients: Dict[asyncio.StreamWriter, str] = {}     # { writer: username }
+        self.users: Set[str] = set()
+        self.logger = self._setup_logging()
+
+    def _setup_logging(self):
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s'
         )
-        self.server.bind((self.HOST, self.PORT))
-        self.server.listen()
-
-        self.users = {}      # { conn: uname }
-
-    def broadcast(self, msg:str, exclude=None):
-        for c in self.users.keys():
-            if c != exclude:
-                try:
-                    c.send(msg.encode())
-                except Exception as e:
-                    print(f"<! [SystemERROR] Error broadcasting message: {e}")
+        return logging.getLogger(__name__)
     
-    def send_online_users(self, client:socket.socket):
-        msg:str = "\n< [System] Online users:"
-        for c in self.users.values():
-            msg += f"  @{c}\n"
-        msg += "\n< [System] End of user list."
-        client.send(msg.encode())
+    async def _disconnect(self, writer:asyncio.StreamWriter):
+        if writer in self.clients:
+            uname = self.clients[writer]
+            del self.clients[writer]
+            self.users.discard(uname)
 
-    def handle_client(self, client:socket.socket):
-        uname:str = None
-        welcome:str = b"< [System] Welcome to spacecat chatroom!\n"
-        welcome += b"< [System] What should we call you?\n"
-        client.send(welcome)
-
-        while True:
             try:
-                req:str = client.recv(1024).decode().strip()
-                if not req:
-                    continue
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
 
-                if req.lower().startswith("/user"):
-                    uname = req.split(" ", 1)[1].strip()
-                    self.users[client] = uname
-                    msg:str = f"< [System] @{uname} joined the chat!\n"
-                    self.broadcast(msg)
-                elif req.lower().startswith("/send"):
-                    content:str = req.split(" ", 1)[1]
-                    msg:str = f"\n< @{uname}: {content}"
-                    self.broadcast(msg, exclude=client)
-                elif req.lower() == "/online":
-                    self.send_online_users(client)
-                elif req.lower() == "/exit":
-                    if client in self.users:
-                        name = self.users.pop(client)
-                        self.broadcast(f"\n< [System] @{name} left the chatroom!")
-                    client.send(b"\n< [System] Goodbye!")
-                    client.close()
+            self.logger.info(f"User @{uname} disconnected")
+            await self.broadcast(f"< [System] @{uname} left the chat!")
+
+    async def broadcast(self, msg: str, exclude=None):
+        if not self.clients:
+            return
+        
+        self.logger.info(f"Broadcasting: {msg}")
+        disconnected = []
+
+        for writer in self.clients:
+            if writer != exclude:
+                try:
+                    writer.write(f"{msg}\n".encode())
+                    await writer.drain()
+                except Exception as e:
+                    self.logger.error(f"<! [System] Error broadcasting: {e}")
+                    disconnected.append(writer)
+        
+        for writer in disconnected:
+            await self._disconnect(writer)
+
+    async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        addr = writer.get_extra_info("peername")
+        self.logger.info(f"< [Server] New connection from {addr}")
+
+        try:
+            while writer not in self.clients:
+                try:
+                    data = await asyncio.wait_for(
+                        reader.readline(), 
+                        timeout=30.0
+                    )
+                    if not data:
+                        break
+
+                    message:str = data.decode().strip()
+                    if message.startswith('/user '):
+                        uname = message[6:].strip()
+                        if uname and uname not in self.users:
+                            self.clients[writer] = uname
+                            self.users.add(uname)
+                            await self.send_to(
+                                writer,
+                                f"Welcome @{uname}! You can now start chatting."
+                            )
+                            self.logger.info(f"User {uname} joined from {addr}")
+                            await self.broadcast(
+                                msg=f"< [System] @{uname} joined the room!",
+                                exclude=writer
+                            )
+                        else:
+                            await self.send_to(
+                                writer,
+                                f"<! [System] Username @{uname} is already taken. Try another one"
+                            )
+                    else:
+                        await self.send_to(
+                            writer,
+                            "Please set your username first with /user <uname>"
+                        )
+                except asyncio.TimeoutError as e:
+                    self.logger.error(f"Client {addr} timed out during uname setup")
                     break
-                else:
-                    print(req)
-            except Exception as e:
-                print(f"\n<! [SystemERROR] Error handling client: {e}")
-                break
-        if client in self.users:
-            name = self.users.pop(client)
-            self.broadcast(f"\n< [System] @{name} left the chatroom!")
-        client.close()
-    
-    def start(self):
-        print(f"<! [SERVER] Server started on {self.HOST}:{self.PORT}")
-        while True:
-            client, addr = self.server.accept()
-            print(f"<! [SERVER] New connection from {addr}")
-            threading.Thread(
-                target=self.handle_client,
-                args=(client,),
-                daemon=True
-            ).start()
+            
+            while writer in self.clients:
+                try:
+                    data = await reader.readline()
+                    if not data:
+                        break
+
+                    msg:str = data.decode().strip()
+                    uname = self.clients[writer]
+
+                    self.logger.info(f"Recieved from {uname}: {msg}")
+
+                    if msg.startswith("/exit "):
+                        await self.send_to(
+                            writer,
+                            f"< [System] Goodbye!"
+                        )
+                        break
+                    elif msg.startswith("/send "):
+                        content:str = msg[6:]
+                        if content.strip():
+                            await self.broadcast(
+                                msg=f"< @{uname} {content}",
+                                exclude=writer
+                            )
+                            self.logger.info(f"Sent from @{uname}: {content}")
+                    else:
+                        await self.send_to(
+                            writer,
+                            "Unknown command, Use /send <message> or <exit>"
+                        )
+                except asyncio.IncompleteReadError:
+                    break
+                except Exception as e:
+                    self.logger.error(f"<! [System] Error handling client {addr}: {e}")
+        except Exception as e:
+            self.logger.error(f"<! [System] Error handling client {addr}: {e}")
+        finally:
+            await self._disconnect(writer)
+
+    async def send_to(self, writer: asyncio.StreamWriter, msg:str):
+        try:
+            writer.write(f"{msg}\n".encode())
+            await writer.drain()
+        except Exception as e:
+            self.logger.error(f"Error sendging message to client: {e}")
+
+    async def start(self):
+        server = await asyncio.start_server(
+            client_connected_cb=self.handle_client,
+            host=self.HOST,
+            port=self.PORT
+        )
+        addr = server.sockets[0].getsockname()
+        self.logger.info(f"< [SERVER] Server started on {addr}")
+
+        async with server:
+            await server.serve_forever()
 
 
 if __name__ == "__main__":
-    server = Server()
-    server.start()
+    server: Server = Server()
+    try:
+        asyncio.run(server.start())
+    except KeyboardInterrupt:
+        print("\n< [SERVER] Server stopped manually")
+    except Exception as e:
+        print(f"Server error: {e}")

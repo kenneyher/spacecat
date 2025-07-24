@@ -18,6 +18,14 @@ class Server:
         )
         return logging.getLogger(__name__)
     
+    def _get_writer(self, uname:str) -> asyncio.StreamWriter:
+        if uname not in self.users:
+            return None
+        
+        for writer, username in self.clients.items():
+            if uname == username:
+                return writer
+    
     async def _disconnect(self, writer:asyncio.StreamWriter):
         if writer in self.clients:
             uname = self.clients[writer]
@@ -31,7 +39,7 @@ class Server:
                 pass
 
             self.logger.info(f"User @{uname} disconnected")
-            await self.broadcast(f"< [System] @{uname} left the chat!")
+            await self.broadcast(f"< [System] @{uname} left the room!")
 
     async def broadcast(self, msg: str, exclude=None):
         if not self.clients:
@@ -120,10 +128,38 @@ class Server:
                                 exclude=writer
                             )
                             self.logger.info(f"Sent from @{uname}: {content}")
+                    elif msg.startswith("/whisper"):
+                        args:list[str] = msg.split(' ')
+                        if len(args) < 3:
+                            await self.send_to(
+                                writer,
+                                "< [System] /whisper should have a <user> and a <msg>"
+                            )
+                        else:
+                            self.logger.info("Args for /whisper " + ", ".join(args))
+                            target:str = args[1]
+                            content:str = " ".join(args[2:])
+                            if target not in self.users:
+                                await self.send_to(
+                                    writer,
+                                    f"< [System] User @{target} could not be resolved."
+                                )
+                            elif not content.strip():
+                                await self.send_to(
+                                    writer,
+                                    "< [System] /whisper should have a <msg>"
+                                )
+                            else:
+                                target_writer = self._get_writer(target)
+                                await self.send_to(
+                                    target_writer,
+                                    f"< @{uname} *whispered* \"{content}\""
+                                )
+
                     else:
                         await self.send_to(
                             writer,
-                            "Unknown command, Use /send <message> or <exit>"
+                            "< [System] Unknown command"
                         )
                 except asyncio.IncompleteReadError:
                     break

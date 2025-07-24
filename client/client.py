@@ -37,7 +37,7 @@ class ChatClient:
                 pass
         self.connected = False
     
-    async def send_message(self, message: str):
+    async def send(self, message: str):
         """Send message to server"""
         if not self.connected or not self.writer:
             return False
@@ -50,7 +50,7 @@ class ChatClient:
             print(f"Error sending message: {e}")
             return False
     
-    async def receive_messages(self):
+    async def receive(self):
         """Continuously receive messages from server"""
         while self.connected and self.reader:
             try:
@@ -127,8 +127,8 @@ class ChatClient:
                     
                     if username:
                         self.attempted_username = username
-                        if await self.send_message(f"/user {username}"):
-                            # Wait for the response to be processed by receive_messages
+                        if await self.send(f"/user {username}"):
+                            # Wait for the response to be processed by receive
                             timeout_count = 0
                             while not self.username and self.attempted_username and timeout_count < 50:
                                 await asyncio.sleep(0.1)
@@ -168,14 +168,14 @@ class ChatClient:
                         continue
                     
                     if user_input == "/exit":
-                        await self.send_message("/exit")
+                        await self.send("/exit")
                         break
                     else:
                         # Clear the input line and show what was typed
                         # print(f"\r{' ' * 50}\r{self.username}> {user_input}")
                         
                         # Send the message
-                        await self.send_message(f"/send {user_input}")
+                        await self.send(f"/send {user_input}")
                         
                         # Show new prompt
                         print(f"{self.username}> ", end="", flush=True)
@@ -191,7 +191,7 @@ class ChatClient:
         
         try:
             # Start receiving messages first
-            receive_task = asyncio.create_task(self.receive_messages())
+            receive_task = asyncio.create_task(self.receive())
             
             # Setup username
             if not await self.setup_username():
@@ -209,7 +209,7 @@ class ChatClient:
             print("Type '/exit' to quit the chat.\n")
             
             # Start new receive task for chat
-            receive_task = asyncio.create_task(self.receive_messages())
+            receive_task = asyncio.create_task(self.receive())
             
             # Handle user input
             input_task = asyncio.create_task(self.handle_user_input())

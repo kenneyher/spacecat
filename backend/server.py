@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import trace
+import traceback                # for debugging
 from typing import Dict, Set
 
 
@@ -9,9 +11,12 @@ class Server:
         self.PORT = port
         self.clients: Dict[asyncio.StreamWriter, str] = {}      # { writer: username }
         self.users: Set[str] = set()
-        self.rooms: Dict[str, Set[str]] = {
-            "general": set()
-        }                    # { room: list[uname] }
+        self.rooms: Dict[str, Dict] = {
+            "general": {
+                "users": set(),
+                "locked": False
+            }
+        }                    # { room: { users, private? } }
         self.logger = self._setup_logging()
 
     def _setup_logging(self):
@@ -49,7 +54,7 @@ class Server:
             return
 
         filter_by_room:bool = False
-        if room and room in self.rooms :
+        if room and room in self.rooms.keys() :
             filter_by_room = True
         
         self.logger.info(f"Broadcasting: {msg}")
@@ -57,7 +62,7 @@ class Server:
 
         for writer in self.clients:
             if filter_by_room:
-                in_same_room = self.clients[writer] in self.rooms[room]
+                in_same_room = self.clients[writer] in self.rooms[room]["users"]
             else:
                 in_same_room = True
             if writer != exclude and in_same_room:
@@ -102,7 +107,7 @@ class Server:
                                 f"Welcome @{uname}! You can now start chatting."
                             )
                             self.logger.info(f"User {uname} joined from {addr}")
-                            self.rooms[current_room].add(uname)
+                            self.rooms[current_room]["users"].add(uname)
                             await self.broadcast(
                                 msg=f"< [System] @{uname} joined [#{current_room}]!",
                                 room=current_room,
@@ -160,7 +165,7 @@ class Server:
                             content:str = " ".join(args[2:])
                             if (
                                 target not in self.users or
-                                target not in self.rooms[current_room]
+                                target not in self.rooms[current_room]["users"]
                             ):
                                 await self.send_to(
                                     writer,
@@ -181,7 +186,6 @@ class Server:
                         await self.list_rooms(writer)
                     elif msg.startswith("/room "):
                         roomname:str = msg.split(' ', 1)[1].strip()
-                        self.rooms[current_room].remove(uname)
                         await self.broadcast(
                             f"< [System] @{uname} left [#{current_room}]",
                             current_room,
@@ -191,9 +195,14 @@ class Server:
                                 writer, 
                                 f"< [System] Creating room [#{roomname}]"
                             )
-                            self.rooms[roomname] = set()
+                            self.rooms[roomname] = {
+                                "users": set(),
+                                "locked": False # change later
+                            }
+                            self.rooms[roomname]["users"].add(uname)
+                        self.logger.info(f"User @{uname} is on {current_room} with {self.rooms[roomname]}")
+                        self.rooms[current_room]["users"].remove(uname)
                         current_room = roomname
-                        self.rooms[current_room].add(uname)
                         await self.broadcast(
                             f"< [System] @{uname} joined [#{current_room}]",
                             current_room,
@@ -206,7 +215,10 @@ class Server:
                 except asyncio.IncompleteReadError:
                     break
                 except Exception as e:
-                    self.logger.error(f"<! [System] Error handling client {addr}: {e}")
+                    traceback.print_exc()
+
+                    err_msg = traceback.format_exc()
+                    self.logger.error(f"<! [System] Error handling client {addr}: {err_msg}")
         except Exception as e:
             self.logger.error(f"<! [System] Error handling client {addr}: {e}")
         finally:

@@ -78,7 +78,9 @@ class Server:
     
     async def list_rooms(self, writer: asyncio.StreamWriter):
         rooms:str = "< [System] Openned Rooms:\n"
-        rooms += "\n".join([f"\t[#{room}]" for room in self.rooms])
+        for room in self.rooms:
+            prefix:str = "\U0001F512 " if self.rooms[room]["locked"] else "#"
+            rooms += f"\t[{prefix}{room}]\n"
         await self.send_to(writer, rooms)
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
@@ -185,21 +187,54 @@ class Server:
                     elif msg.startswith("/rooms"):
                         await self.list_rooms(writer)
                     elif msg.startswith("/room "):
-                        roomname:str = msg.split(' ', 1)[1].strip()
+                        # Parse room command with optional flags
+                        args = msg.split(' ')
+                        roomname = None
+                        is_locked = False
+                        
+                        # Parse arguments to handle --locked and --unlocked flags
+                        i = 1  # Skip "/room"
+                        while i < len(args):
+                            if args[i] == "--locked":
+                                is_locked = True
+                                i += 1
+                            elif args[i] == "--unlocked":
+                                is_locked = False
+                                i += 1
+                            else:
+                                # This should be the room name
+                                roomname = args[i]
+                                i += 1
+                        
+                        if not roomname:
+                            await self.send_to(
+                                writer,
+                                "< [System] /room command requires a room name"
+                            )
+                            continue
+                        
+                        if roomname not in self.rooms:
+                            lock_status = "locked" if is_locked else "unlocked"
+                            await self.send_to(
+                                writer, 
+                                f"< [System] Creating {lock_status} room [#{roomname}]"
+                            )
+                            self.rooms[roomname] = {
+                                "users": set(),
+                                "locked": is_locked
+                            }
+                            self.rooms[roomname]["users"].add(uname)
+                        else:
+                            if self.rooms[roomname]["locked"]:
+                                await self.send_to(
+                                    writer,
+                                    f"< [System] Room [#{roomname}] is locked. You need to be invited." 
+                                )
+                                continue
                         await self.broadcast(
                             f"< [System] @{uname} left [#{current_room}]",
                             current_room,
                         )
-                        if roomname not in self.rooms:
-                            await self.send_to(
-                                writer, 
-                                f"< [System] Creating room [#{roomname}]"
-                            )
-                            self.rooms[roomname] = {
-                                "users": set(),
-                                "locked": False # change later
-                            }
-                            self.rooms[roomname]["users"].add(uname)
                         self.logger.info(f"User @{uname} is on {current_room} with {self.rooms[roomname]}")
                         self.rooms[current_room]["users"].remove(uname)
                         current_room = roomname
@@ -226,7 +261,7 @@ class Server:
 
     async def send_to(self, writer: asyncio.StreamWriter, msg:str):
         try:
-            writer.write(f"{msg}\n".encode())
+            writer.write(f"{msg}\n".encode("utf-8"))
             await writer.drain()
         except Exception as e:
             self.logger.error(f"Error sendging message to client: {e}")

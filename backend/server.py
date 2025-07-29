@@ -77,11 +77,28 @@ class Server:
             await self._disconnect(writer)
     
     async def list_rooms(self, writer: asyncio.StreamWriter):
-        rooms:str = "< [System] Openned Rooms:\n"
+        rooms:str = "< [System] Open Rooms:\n"
         for room in self.rooms:
             prefix:str = "\U0001F512 " if self.rooms[room]["locked"] else "#"
             rooms += f"\t[{prefix}{room}]\n"
         await self.send_to(writer, rooms)
+
+
+    # Necessary so the user can join their own private room
+    async def join_room(self, uname:str, current_room:str, target_room:str):
+        self.rooms[target_room]["users"].add(uname)
+        await self.broadcast(
+            f"< [System] @{uname} left [#{current_room}]",
+            current_room,
+        )
+        self.logger.info(f"User @{uname} is on {current_room} with {self.rooms[target_room]}")
+        self.rooms[current_room]["users"].discard(uname)
+        current_room = target_room
+        await self.broadcast(
+            f"< [System] @{uname} joined [#{current_room}]",
+            current_room,
+        )
+
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         addr = writer.get_extra_info("peername")
@@ -223,25 +240,32 @@ class Server:
                                 "users": set(),
                                 "locked": is_locked
                             }
-                            self.rooms[roomname]["users"].add(uname)
+                            await self.join_room(uname, current_room, roomname)
+                            current_room = roomname
                         else:
-                            if self.rooms[roomname]["locked"]:
+                            await self.send_to(
+                                writer,
+                                f"< [System] a room called {roomname} already exists."
+                            )
+                            continue
+                        # This is the join room logic (230-245)
+                        
+                    elif msg.startswith("/enter"):
+                        args = msg.split(" ")
+                        roomname = args[1]
+                        if roomname not in self.rooms:
+                            await self.send_to(
+                                writer,
+                                f"< [System] Couldn't find room: {roomname}"
+                            )
+                        elif self.rooms[roomname]["locked"]:
                                 await self.send_to(
                                     writer,
                                     f"< [System] Room [#{roomname}] is locked. You need to be invited." 
                                 )
-                                continue
-                        await self.broadcast(
-                            f"< [System] @{uname} left [#{current_room}]",
-                            current_room,
-                        )
-                        self.logger.info(f"User @{uname} is on {current_room} with {self.rooms[roomname]}")
-                        self.rooms[current_room]["users"].remove(uname)
-                        current_room = roomname
-                        await self.broadcast(
-                            f"< [System] @{uname} joined [#{current_room}]",
-                            current_room,
-                        )
+                        else:
+                            await self.join_room(uname, current_room, roomname)
+                            current_room = roomname
                     else:
                         await self.send_to(
                             writer,

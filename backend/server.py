@@ -14,7 +14,8 @@ class Server:
         self.rooms: Dict[str, Dict] = {
             "general": {
                 "users": set(),
-                "locked": False
+                "locked": False,
+                "host": None,
             }
         }                    # { room: { users, private? } }
         self.logger = self._setup_logging()
@@ -85,18 +86,12 @@ class Server:
 
 
     # Necessary so the user can join their own private room
-    async def join_room(self, uname:str, current_room:str, target_room:str):
+    async def join_room(self, uname:str, target_room:str):
         self.rooms[target_room]["users"].add(uname)
+        self.logger.info(f"User @{uname} is in {target_room} with {self.rooms[target_room]}")
         await self.broadcast(
-            f"< [System] @{uname} left [#{current_room}]",
-            current_room,
-        )
-        self.logger.info(f"User @{uname} is on {current_room} with {self.rooms[target_room]}")
-        self.rooms[current_room]["users"].discard(uname)
-        current_room = target_room
-        await self.broadcast(
-            f"< [System] @{uname} joined [#{current_room}]",
-            current_room,
+            f"< [System] @{uname} joined [#{target_room}]",
+            target_room,
         )
 
 
@@ -238,9 +233,16 @@ class Server:
                             )
                             self.rooms[roomname] = {
                                 "users": set(),
-                                "locked": is_locked
+                                "locked": is_locked,
+                                "hosts": set({uname})
                             }
-                            await self.join_room(uname, current_room, roomname)
+                            
+                            await self.broadcast(
+                                f"< [System] @{uname} left [#{current_room}]",
+                                current_room,
+                            )
+                            self.rooms[current_room]["users"].discard(uname)
+                            await self.join_room(uname, roomname)
                             current_room = roomname
                         else:
                             await self.send_to(
@@ -248,8 +250,7 @@ class Server:
                                 f"< [System] a room called {roomname} already exists."
                             )
                             continue
-                        # This is the join room logic (230-245)
-                        
+                    # This is the join room logic (230-245)
                     elif msg.startswith("/enter"):
                         args = msg.split(" ")
                         roomname = args[1]
@@ -264,7 +265,13 @@ class Server:
                                     f"< [System] Room [#{roomname}] is locked. You need to be invited." 
                                 )
                         else:
-                            await self.join_room(uname, current_room, roomname)
+                            await self.broadcast(
+                                f"< [System] @{uname} left [#{current_room}]",
+                                current_room,
+                            )
+                            self.rooms[current_room]["users"].discard(uname)
+
+                            await self.join_room(uname, roomname)
                             current_room = roomname
                     else:
                         await self.send_to(

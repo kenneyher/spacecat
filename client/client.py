@@ -11,11 +11,12 @@ class ChatClient:
         self.reader = None
         self.writer = None
         self.username = None
-        self.attempted_username = None
+        self.current_room = "general"
         self.connected = False
+        self.authenticated = False
         self.input_queue = Queue()
         self.running = True
-        self.room = "general"
+        self.awaiting_password = False
     
     async def connect(self):
         """Connect to the chat server"""
@@ -33,6 +34,7 @@ class ChatClient:
         self.running = False
         if self.writer:
             try:
+                await self.send("/exit")
                 self.writer.close()
                 await self.writer.wait_closed()
             except Exception:
@@ -61,27 +63,21 @@ class ChatClient:
                     break
                 
                 message = data.decode().strip()
-                if message:
-                    # Clear the current input line and show the message
-                    print(f"\r{' ' * 50}\r{message}")
-                    
-                    # Check if this is a username setup response
-                    if not self.username and self.attempted_username:
-                        if "Welcome" in message:
-                            self.username = self.attempted_username
-                            self.attempted_username = None
-                            return  # Exit receive loop during setup
-                        elif "already taken" in message or "invalid" in message:
-                            self.attempted_username = None
-                            print("Username> ", end="", flush=True)
-                            continue
-                    
-                    if f"@{self.username}" in message and f"joined" in message:
-                        self.room = re.findall(r'\[(#\w+)\]', message)[0]
-
-                    # Show prompt only if we have a username
-                    if self.username:
-                        print(f"[{self.room}]> ", end="", flush=True)
+                if not message:
+                    continue
+                
+                # Clear current input line and show message
+                print(f"\r{' ' * 60}\r{message}")
+                
+                # Handle authentication responses
+                if not self.authenticated:
+                    await self._handle_auth_response(message)
+                else:
+                    # Handle room changes and other updates
+                    self._update_room_from_message(message)
+                
+                # Show appropriate prompt
+                self._show_prompt()
                     
             except asyncio.CancelledError:
                 break
@@ -89,21 +85,50 @@ class ChatClient:
                 print(f"Error receiving message: {e}")
                 break
     
-    def show_prompt(self):
-        """Show the input prompt"""
-        if self.username:
-            print(f"[{self.username}]> ", end="", flush=True)
-        else:
-            print("Username> ", end="", flush=True)
+    async def _handle_auth_response(self, message: str):
+        """Handle server responses during authentication"""
+        if "Please enter your username:" in message:
+            self.awaiting_password = False
+            print("Username: ", end="", flush=True)
+        elif "Please enter your password:" in message:
+            self.awaiting_password = True
+            print("Password: ", end="", flush=True)
+        elif "Welcome" in message and ("@" + str(self.username) if self.username else "") in message:
+            self.authenticated = True
+            print("\nAuthentication successful!")
+        elif any(error in message.lower() for error in ["already taken", "invalid", "cannot be empty", "already online"]):
+            # Reset and ask for username again
+            self.username = None
+            self.awaiting_password = False
     
-    def input_thread(self):
+    def _update_room_from_message(self, message: str):
+        """Extract current room from server messages"""
+        # Look for room changes in system messages
+        if f"@{self.username}" in message and "joined" in message:
+            room_match = re.search(r'\[#(\w+)\]', message)
+            if room_match:
+                self.current_room = room_match.group(1)
+        elif "Created" in message and "room" in message:
+            room_match = re.search(r'room \[#(\w+)\]', message)
+            if room_match:
+                self.current_room = room_match.group(1)
+    
+    def _show_prompt(self):
+        """Show appropriate input prompt"""
+        if not self.authenticated:
+            if self.awaiting_password:
+                print("Password: ", end="", flush=True)
+            else:
+                print("Username: ", end="", flush=True)
+        else:
+            print(f"[#{self.current_room}]> ", end="", flush=True)
+    
+    def _input_thread(self):
         """Handle input in a separate thread"""
         while self.running:
             try:
-                # Don't show prompt here - let the main thread handle it
                 user_input = input()
-                
-                if self.running:  # Check if still running
+                if self.running:
                     self.input_queue.put(user_input)
             except (EOFError, KeyboardInterrupt):
                 if self.running:
@@ -114,80 +139,63 @@ class ChatClient:
                     print(f"Input error: {e}")
                 break
     
-    async def setup_username(self):
-        """Handle initial username setup"""
-        print("Enter your username: ", end="", flush=True)
+    async def _handle_authentication(self):
+        """Handle the authentication process"""
+        print("Authenticating with server...")
         
         # Start input thread
-        input_thread = threading.Thread(target=self.input_thread, daemon=True)
+        input_thread = threading.Thread(target=self._input_thread, daemon=True)
         input_thread.start()
         
-        while not self.username and self.running:
-            try:
-                # Check for input with timeout
-                await asyncio.sleep(0.1)  # Small delay to prevent busy waiting
+        while not self.authenticated and self.running:
+            await asyncio.sleep(0.1)
+            
+            if not self.input_queue.empty():
+                user_input = self.input_queue.get().strip()
                 
-                if not self.input_queue.empty():
-                    username = self.input_queue.get().strip()
-                    
-                    if username:
-                        self.attempted_username = username
-                        if await self.send(f"/user {username}"):
-                            # Wait for the response to be processed by receive
-                            timeout_count = 0
-                            while not self.username and self.attempted_username and timeout_count < 50:
-                                await asyncio.sleep(0.1)
-                                timeout_count += 1
-                            
-                            if not self.username and timeout_count >= 50:
-                                print("\rServer response timeout. Try again.")
-                                print("Username> ", end="", flush=True)
-                                self.attempted_username = None
-                        else:
-                            print("\rFailed to send username. Connection lost.")
-                            return False
-                    else:
-                        print("\rUsername cannot be empty.")
-                        print("Username> ", end="", flush=True)
-                        
-            except Exception as e:
-                print(f"Setup error: {e}")
-                return False
+                if not user_input:
+                    self._show_prompt()
+                    continue
+                
+                if not self.awaiting_password:
+                    # Sending username
+                    self.username = user_input
+                    await self.send(f"/user {user_input}")
+                else:
+                    # Sending password
+                    await self.send(user_input)
         
-        return self.username is not None
+        return self.authenticated
     
-    async def handle_user_input(self):
-        """Handle user input from the queue"""
-        # Show initial prompt
-        print(f"[{self.room}]> ", end="", flush=True)
-        
-        while self.connected and self.running:
+    async def _handle_chat_input(self):
+        """Handle user input during chat"""
+        while self.connected and self.running and self.authenticated:
             try:
-                await asyncio.sleep(0.1)  # Small delay to prevent busy waiting
+                await asyncio.sleep(0.1)
                 
                 if not self.input_queue.empty():
                     user_input = self.input_queue.get().strip()
                     
-                    # print(f"\r{' ' * 50}\r{user_input}") # activate for debugging purposes only
                     if not user_input:
-                        print(f"[{self.room}]> ", end="", flush=True)
+                        self._show_prompt()
                         continue
                     
+                    # Handle exit command
                     if user_input == "/exit":
                         await self.send("/exit")
                         break
-                    elif not user_input.startswith("/"):
-                        # Clear the input line and show what was typed
-                        
-                        # Send the message
-                        await self.send(f"/send {user_input}")
-                        
-                        # Show new prompt
-                        print(f"[{self.room}]> ", end="", flush=True)
-                    else:
+                    
+                    # Handle special commands
+                    elif user_input.startswith("/"):
                         await self.send(user_input)
-                        # Show new prompt
-                        print(f"[{self.room}]> ", end="", flush=True)
+                    
+                    # Handle regular messages
+                    else:
+                        await self.send(f"/send {user_input}")
+                    
+                    # Clear input line after sending
+                    print(f"\r{' ' * 60}\r", end="", flush=True)
+                    self._show_prompt()
                     
             except Exception as e:
                 print(f"Input handling error: {e}")
@@ -199,29 +207,30 @@ class ChatClient:
             return
         
         try:
-            # Start receiving messages first
+            # Start message receiver
             receive_task = asyncio.create_task(self.receive())
             
-            # Setup username
-            if not await self.setup_username():
-                receive_task.cancel()
+            # Handle authentication
+            if not await self._handle_authentication():
+                print("Authentication failed.")
                 return
             
-            # Cancel the setup receive task and start a new one for chat
-            receive_task.cancel()
-            try:
-                await receive_task
-            except asyncio.CancelledError:
-                pass
+            print("\n" + "="*50)
+            print("🎉 Welcome to the chatroom!")
+            print("Available commands:")
+            print("  • Type messages directly to chat")
+            print("  • /whisper <user> <msg> - Send private message")
+            print("  • /rooms - List available rooms")
+            print("  • /room <name> [--locked] - Create new room")
+            print("  • /enter <name> - Join existing room")
+            print("  • /history - Show recent messages")
+            print("  • /exit - Leave the chat")
+            print("="*50)
+            print(f"You're now in room: #{self.current_room}")
+            self._show_prompt()
             
-            print("\nYou can now start chatting! Type your messages and press Enter.")
-            print("Type '/exit' to quit the chat.\n")
-            
-            # Start new receive task for chat
-            receive_task = asyncio.create_task(self.receive())
-            
-            # Handle user input
-            input_task = asyncio.create_task(self.handle_user_input())
+            # Handle chat input
+            input_task = asyncio.create_task(self._handle_chat_input())
             
             # Wait for either task to complete
             done, pending = await asyncio.wait(
@@ -241,14 +250,18 @@ class ChatClient:
             print(f"Client error: {e}")
         finally:
             await self.disconnect()
-            print("Disconnected from server.")
+            print("\nDisconnected from server. Goodbye! 👋")
 
 async def main():
+    """Main entry point"""
+    print("🚀 Starting ChatRoom Client...")
+    print("Press Ctrl+C to quit at any time\n")
+    
     client = ChatClient()
     try:
         await client.run()
     except KeyboardInterrupt:
-        print("\nClient shutting down...")
+        print("\n\nShutting down client...")
 
 if __name__ == "__main__":
     # Handle Windows-specific event loop policy

@@ -382,7 +382,46 @@ class Server:
                                 )
                         else:
                             await self.send_to(writer, f"< [System] No message history for [#{current_room}]")
-                            
+                    elif message.startswith("/knock"):
+                        args = message.split(" ")
+                        if len(args) < 2:
+                            await self.send_to(
+                                writer,
+                                "< [System] /knock should be used with <roomname>"
+                            )
+                            continue
+
+                        room_name = args[1]
+                        room_info = db.get_room_info(room_name)
+
+
+                        if not room_info:
+                            await self.send_to(
+                                writer,
+                                f"< [System] Could not resolve room [#{room_name}]"
+                            )
+                            continue
+                        else:
+                            self.logger.info(
+                                f"< [System] {username} `/knock`ed room {room_name} with {room_info}"
+                            )
+                            host = room_info['created_by']
+                            if host == username:
+                                await self.send_to(
+                                    writer,
+                                    "< [System] Cannot invite yourself to a room you created"
+                                )
+                            else:
+                                if not room_info["is_locked"]:
+                                    await self.send_to(
+                                        writer,
+                                        f"< [System] Room [#{room_name}] is unlocked. Use /enter {room_name} to join"
+                                    )
+                                else:
+                                    await self.send_to(
+                                        writer,
+                                        f"< [System] Invitation sent to {host}!"
+                                    )
                     else:
                         await self.send_to(
                             writer,

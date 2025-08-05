@@ -138,5 +138,6 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
-__pycache__
-./backend/spacecat.db
+__pycache__/
+*.py[cod]
+backend/spacecat.db

@@ -73,6 +73,17 @@ def init_db():
                     FOREIGN KEY (user_id) REFERENCES users (id)
                 )
             ''')
+
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS knock_requests (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    requested_by INTEGER,
+                    room_id INTEGER,
+                    accepted BOOLEAN DEFAULT 0,
+                    FOREIGN KEY (requested_by) REFERENCES users (id),
+                    FOREIGN KEY (room_id) REFERENCES rooms (id)
+                )
+            ''')
             
             # Create indexes for better performance
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)')
@@ -360,6 +371,27 @@ def save_message(username: str, room_name: str, content: str, message_type: str 
         logger.error(f"Error saving message: {e}")
         return False
 
+def save_request(username: str, room_name: str) -> bool:
+    try: 
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                INSERT INTO knock_requests (requested_by, room_id, accepted)
+                SELECT u.id, r.id, 0
+                FROM rooms r
+                CROSS JOIN users u
+                WHERE r.name = ? AND u.username = ?
+            ''', (username, room_name))
+
+            logger.info(f"Saving knock request from {username}")
+            conn.commit()
+        
+        return True
+    except Exception as e:
+        logger.error(f"Error saving knock requests: {e}")
+        return False
+
 def get_room_history(room_name: str, limit: int = 50) -> List[Dict]:
     """Get recent message history for a room"""
     try:
@@ -386,4 +418,24 @@ def get_room_history(room_name: str, limit: int = 50) -> List[Dict]:
             return list(reversed(messages))  # Return in chronological order
     except Exception as e:
         logger.error(f"Error getting room history: {e}")
+        return []
+
+def get_requests(room_name: str) -> list[str]:
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT u.username
+                FROM knock_requests kr
+                JOIN users u ON kr.requested_by = u.id
+                JOIN rooms r ON kr.room_id = r.id
+                WHERE r.name = ? AND kr.accepted = 0
+            ''', (room_name,))
+
+            results = cursor.fetchall()
+
+            return [row['username'] for row in results]
+    except Exception as e:
+        logger.error(f"Error getting requests: {e}")
         return []

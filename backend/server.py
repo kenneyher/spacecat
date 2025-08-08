@@ -420,8 +420,35 @@ class Server:
                                 else:
                                     await self.send_to(
                                         writer,
-                                        f"< [System] Invitation sent to {host}!"
+                                        f"< [System] Invitation sent to host!"
                                     )
+                                    db.save_request(username, room_name)
+                    elif message.startswith("/peephole"):
+                        room_info = db.get_room_info(current_room)
+
+                        if room_info['created_by'] != username:
+                            await self.send_to(
+                                writer,
+                                "< [System] Only the host can see knock requests on this room."
+                            )
+                            continue
+                        elif not room_info['is_locked']:
+                            await self.send_to(
+                                writer,
+                                "< [System] This is not a private room. Knocks are only available for private rooms."
+                            )
+                            continue
+                        else:
+                            requests = db.get_requests(current_room)
+
+                            if not requests:
+                                await self.send_to(
+                                    writer,
+                                    "< [System] There is no one at the door!"
+                                )
+                                continue
+                            else:
+                                self.logger.info(requests)
                     else:
                         await self.send_to(
                             writer,

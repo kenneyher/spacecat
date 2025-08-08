@@ -22,7 +22,11 @@ from .services import (
 
     # Message handling
     save_message,
-    get_room_history
+    get_room_history,
+
+    # Knock requests
+    save_request,
+    get_requests,
 )
 
 # Make all functions available at package level
@@ -41,5 +45,7 @@ __all__ = [
     'leave_room',
     'is_user_in_room',
     'save_message',
-    'get_room_history'
+    'get_room_history',
+    'save_request',
+    'get_requests'
 ]

@@ -381,7 +381,7 @@ def save_request(username: str, room_name: str) -> bool:
                 SELECT u.id, r.id, 0
                 FROM rooms r
                 CROSS JOIN users u
-                WHERE r.name = ? AND u.username = ?
+                WHERE u.username = ? AND r.name = ?
             ''', (username, room_name))
 
             logger.info(f"Saving knock request from {username}")

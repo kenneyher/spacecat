@@ -350,8 +350,8 @@ class Server:
                                 writer,
                                 f"< [System] Room '{room_name}' not found"
                             )
-                        elif room_info['is_locked']:
-                            await self.send_to(
+                        elif room_info['is_locked'] and not db.is_user_in_room(username, room_name):
+                             await self.send_to(
                                 writer,
                                 f"< [System] Room [#{room_name}] is locked. You need to be invited."
                             )
@@ -418,11 +418,16 @@ class Server:
                                         f"< [System] Room [#{room_name}] is unlocked. Use /enter {room_name} to join"
                                     )
                                 else:
-                                    await self.send_to(
-                                        writer,
-                                        f"< [System] Invitation sent to host!"
-                                    )
-                                    db.save_request(username, room_name)
+                                    if db.save_request(username, room_name):
+                                        await self.send_to(
+                                            writer,
+                                            f"< [System] Request sent to host!"
+                                        )
+                                    else:
+                                        await self.send_to(
+                                            writer,
+                                            f"< [System] The request couldn't be sent"
+                                        )
                     elif message.startswith("/peephole"):
                         room_info = db.get_room_info(current_room)
 
@@ -449,6 +454,13 @@ class Server:
                                 continue
                             else:
                                 self.logger.info(requests)
+                                msg = "< [System] These users knocked at your door: "
+                                for user in requests:
+                                    msg += f"\n@{user}"
+                                await self.send_to(
+                                    writer,
+                                    msg
+                                )
                     else:
                         await self.send_to(
                             writer,

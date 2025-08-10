@@ -45,10 +45,8 @@ class Server:
             del self.clients[writer]
             self.active_users.discard(username)
             
-            # Remove from database room tracking
-            if current_room:
-                db.leave_room(username, current_room)
-                self.user_rooms.pop(username, None)
+
+            self.user_rooms.pop(username, None)
 
             try:
                 writer.close()
@@ -111,23 +109,42 @@ class Server:
         await self.send_to(writer, rooms_text.rstrip())
 
     async def join_room(self, username: str, room_name: str, is_host: bool = False):
-        """Add user to a room"""
-        # Update database
-        if db.join_room(username, room_name, is_host):
-            # Update local tracking
+        """Move a connected user into a room (server manages active sessions).
+        DB is only used to persist membership (add_room_member) — it does NOT represent active users.
+        """
+        try:
+            # Ensure persistent membership exists (create if first time / invited)
+            try:
+                created = db.add_room_member(username, room_name, is_host)
+                if not created:
+                    # already a member or other non-fatal condition — continue
+                    self.logger.debug(f"Persistent membership for @{username} in #{room_name} already existed or couldn't be created.")
+            except Exception as e:
+                self.logger.exception(f"Error ensuring persistent membership for @{username} in #{room_name}: {e}")
+
+            # Broadcast leaving old room (active tracking only)
             old_room = self.user_rooms.get(username)
+            if old_room and old_room != room_name:
+                await self.broadcast(
+                    f"< [System] @{username} left [#{old_room}]",
+                    room=old_room,
+                )
+
+            # Update local active-room tracking
             self.user_rooms[username] = room_name
+
+            self.logger.info(f"User @{username} joined room '{room_name}' (active)")
             
-            self.logger.info(f"User @{username} joined room '{room_name}'")
-            
-            # Notify the room
+            # Notify the new room (active users only)
             await self.broadcast(
                 f"< [System] @{username} joined [#{room_name}]",
                 room=room_name,
             )
-            
             return True
-        return False
+        except Exception as e:
+            self.logger.error(f"Error in join_room for @{username}: {e}")
+            return False
+
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         addr = writer.get_extra_info("peername")
@@ -318,14 +335,6 @@ class Server:
                                 f"< [System] Created {lock_status} room [#{room_name}]"
                             )
                             
-                            # Leave current room and join new room
-                            if current_room:
-                                db.leave_room(username, current_room)
-                                await self.broadcast(
-                                    f"< [System] @{username} left [#{current_room}]",
-                                    current_room,
-                                )
-                            
                             await self.join_room(username, room_name, is_host=True)
                         else:
                             await self.send_to(
@@ -350,20 +359,12 @@ class Server:
                                 writer,
                                 f"< [System] Room '{room_name}' not found"
                             )
-                        elif room_info['is_locked'] and not db.is_user_in_room(username, room_name):
+                        elif room_info['is_locked'] and not db.is_member_in_room(username, room_name):
                              await self.send_to(
                                 writer,
                                 f"< [System] Room [#{room_name}] is locked. You need to be invited."
                             )
                         else:
-                            # Leave current room
-                            if current_room:
-                                db.leave_room(username, current_room)
-                                await self.broadcast(
-                                    f"< [System] @{username} left [#{current_room}]",
-                                    current_room,
-                                )
-                            
                             # Join new room
                             await self.join_room(username, room_name)
                             

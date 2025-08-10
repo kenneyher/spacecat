@@ -16,9 +16,10 @@ from .services import (
     create_room,
     get_room_info,
     get_all_rooms,
-    join_room,
-    leave_room,
-    is_user_in_room,
+    add_room_member,
+    remove_room_member,
+    is_member_in_room,
+    get_room_members,
 
     # Message handling
     save_message,
@@ -41,11 +42,12 @@ __all__ = [
     'create_room',
     'get_room_info',
     'get_all_rooms',
-    'join_room',
-    'leave_room',
-    'is_user_in_room',
+    'add_room_member',
+    'remove_room_member',
+    'is_member_in_room',
+    'get_room_members',
     'save_message',
     'get_room_history',
     'save_request',
-    'get_requests'
+    'get_requests',
 ]

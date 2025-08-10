@@ -429,6 +429,30 @@ class Server:
                                             writer,
                                             f"< [System] The request couldn't be sent"
                                         )
+                    elif message.startswith("/letin"):
+                        args = message.split()
+                        if len(args) < 2:
+                            await self.send_to(
+                                writer,
+                                "< [System] /letin should be used with <username>"
+                            )
+                            continue
+                        
+                        target_user = args[1]
+                        succesful = db.add_room_member(target_user, current_room, False)
+
+                        if not succesful:
+                            await self.send_to(
+                                writer,
+                                "< [System] User or room coulnd't be resolved"
+                            )
+                        else:
+                            if target_user in self.active_users:
+                                target_writer = self._get_writer(target_user)
+                                await self.send_to(
+                                    target_writer,
+                                    f"\033[91m< [System] {username} has invited you to {room_name}!\033[0m"
+                                )
                     elif message.startswith("/peephole"):
                         room_info = db.get_room_info(current_room)
 
